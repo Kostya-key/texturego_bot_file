@@ -1,7 +1,7 @@
 import sharp from "sharp-esm";
 
 export const config = {
-  runtime: "nodejs20.x",
+  runtime: "nodejs",
 };
 
 export default async function handler(req, res) {
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
 
   let data = req.body;
 
-  // Если req.body строка → парсим
+  // Иногда req.body приходит как текст
   if (typeof data === "string") {
     try {
       data = JSON.parse(data);
@@ -60,3 +60,4 @@ export default async function handler(req, res) {
     });
   }
 }
+
