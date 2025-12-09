@@ -1,33 +1,102 @@
-import { Telegraf } from "telegraf";
 import fetch from "node-fetch";
-import dotenv from "dotenv";
+import { config } from "dotenv";
+import generateHandler from "./generate.js"; // твоя функция generate.js
 
-dotenv.config();
+config(); // чтобы использовать переменные окружения на локали
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-bot.start((ctx) => {
-  ctx.reply("Отправь фото поверхности, и я сделаю текстуру-тайл 2K PNG.");
-});
+export const config = {
+  runtime: "nodejs",
+};
 
-bot.on("photo", async (ctx) => {
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: "Use POST method" });
+  }
+
+  let update = req.body;
+
+  // Если body приходит как текст, парсим JSON
+  if (typeof update === "string") {
+    try {
+      update = JSON.parse(update);
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: "Invalid JSON" });
+    }
+  }
+
+  // Проверяем наличие сообщения
+  if (!update.message) return res.status(200).json({ ok: true });
+
+  const chat_id = update.message.chat.id;
+  const text = update.message.text;
+
   try {
-    const file = await ctx.telegram.getFileLink(
-      ctx.message.photo.pop().file_id
-    );
-    const img = await fetch(file).then((r) => r.arrayBuffer());
+    // --- Обработка команды /start ---
+    if (text === "/start") {
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id,
+          text: "Привет! Пришли мне фото, и я сделаю тайл 2K."
+        })
+      });
+      return res.status(200).json({ ok: true });
+    }
 
-    const response = await fetch(process.env.VERCEL_ENDPOINT, {
+    // --- Обработка фото ---
+    if (update.message.photo && update.message.photo.length > 0) {
+      // Берём самое большое фото
+      const file_id = update.message.photo[update.message.photo.length - 1].file_id;
+
+      // Получаем ссылку на файл через Telegram API
+      const fileRes = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${file_id}`);
+      const fileData = await fileRes.json();
+      const file_path = fileData.result.file_path;
+
+      const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${file_path}`;
+      const imageResp = await fetch(fileUrl);
+      const arrayBuffer = await imageResp.arrayBuffer();
+      const imageBuffer = Buffer.from(arrayBuffer);
+
+      // Генерируем тайл через generate.js
+      const fakeReq = { body: JSON.stringify({ imageBase64: imageBuffer.toString("base64") }) };
+      const fakeRes = {
+        status: (code) => ({ send: (data) => data, json: (data) => data }),
+      };
+
+      const result = await generateHandler(fakeReq, fakeRes);
+      const base64Result = result.result || result;
+
+      // Отправляем обратно пользователю
+      await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id,
+          photo: `data:image/png;base64,${base64Result}`
+        })
+      });
+
+      return res.status(200).json({ ok: true });
+    }
+
+    // --- Неизвестное сообщение ---
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageBase64: Buffer.from(img).toString("base64") }),
-    }).then((r) => r.json());
+      body: JSON.stringify({
+        chat_id,
+        text: "Отправь /start или фото для генерации тайла."
+      })
+    });
 
-    await ctx.replyWithPhoto({ source: Buffer.from(response.result, "base64") });
-    ctx.reply("Отправьте следующее фото 🙌");
-  } catch (error) {
-    ctx.reply("Ошибка обработки. Попробуйте снова.");
+    return res.status(200).json({ ok: true });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ ok: false, error: err.toString() });
   }
-});
-
-bot.launch();
+}
