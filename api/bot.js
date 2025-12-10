@@ -1,18 +1,31 @@
-// api/bot.js - Рабочий вебхук для Vercel
+// api/bot.js - Рабочий вебхук для Vercel с парсингом тела
 import { Telegraf } from 'telegraf';
 
-// Инициализируем бота
-const bot = new Telegraf(process.env.BOT_TOKEN);
+// 1. Функция для чтения raw body запроса
+async function readRawBody(request) {
+  const chunks = [];
+  for await (const chunk of request) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks);
+}
 
-// Обработка команды /start
+// 2. Инициализируем бота
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  throw new Error('❌ BOT_TOKEN не найден в настройках Vercel!');
+}
+const bot = new Telegraf(BOT_TOKEN);
+
+// 3. Обработка команды /start
 bot.command('start', async (ctx) => {
-  console.log(`[BOT] /start from ${ctx.from.id}`);
-  await ctx.reply('🎉 Бот работает! Теперь можно отправлять фото.');
+  console.log(`[BOT] /start от пользователя ${ctx.from.id}`);
+  await ctx.reply('🎉 Привет! Я TextureBot. Отправь мне фото для создания текстуры.');
 });
 
-// Главный обработчик Vercel
+// 4. Главный обработчик Vercel
 export default async function handler(req, res) {
-  console.log(`[WEBHOOK] Called: ${req.method} ${req.url}`);
+  console.log(`[WEBHOOK] Вызов: ${req.method} ${req.url}`);
   
   // Для GET запросов - проверка
   if (req.method === 'GET') {
@@ -22,21 +35,49 @@ export default async function handler(req, res) {
   // Для POST запросов от Telegram
   if (req.method === 'POST') {
     try {
-      const update = req.body;
-      console.log(`[WEBHOOK] Update received:`, update.update_id);
+      console.log('[WEBHOOK] Чтение тела запроса...');
       
-      // Обрабатываем обновление через бота
+      // 4.1. Читаем raw body
+      const rawBody = await readRawBody(req);
+      const bodyText = rawBody.toString('utf8');
+      console.log('[WEBHOOK] Тело запроса (первые 300 символов):', bodyText.substring(0, 300));
+      
+      // 4.2. Парсим JSON
+      let update;
+      try {
+        update = JSON.parse(bodyText);
+        console.log(`[WEBHOOK] Парсинг успешен, update_id: ${update.update_id}`);
+      } catch (parseError) {
+        console.error('[WEBHOOK] Ошибка парсинга JSON:', parseError.message);
+        return res.status(400).json({ error: 'Invalid JSON', details: parseError.message });
+      }
+      
+      // 4.3. Проверяем структуру update
+      if (!update || typeof update !== 'object') {
+        throw new Error('Invalid update structure');
+      }
+      
+      // 4.4. Обрабатываем обновление через бота
+      console.log('[WEBHOOK] Передаю обновление боту...');
       await bot.handleUpdate(update);
+      console.log('[WEBHOOK] Бот обработал обновление');
       
-      // Отправляем успешный ответ Telegram
+      // 4.5. Отправляем успешный ответ Telegram
       return res.status(200).json({ ok: true });
       
     } catch (error) {
-      console.error('[WEBHOOK] Error:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      // 4.6. Логируем ВСЕ ошибки
+      console.error('[WEBHOOK] КРИТИЧЕСКАЯ ОШИБКА:', error.message);
+      console.error('[WEBHOOK] Стек ошибки:', error.stack);
+      
+      // Отправляем 500, но с информацией для логов
+      return res.status(500).json({ 
+        error: 'Internal server error',
+        message: error.message 
+      });
     }
   }
   
-  // Для других методов
+  // Для других методов HTTP
   return res.status(405).send('Method not allowed');
 }
