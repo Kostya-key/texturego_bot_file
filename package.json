@@ -1,14 +1,11 @@
 {
-  "name": "texture-bot-mvp",
+  "name": "texturego-bot",
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "bot": "node bot/bot.js"
-  },
   "dependencies": {
-    "telegraf": "^4.15.0",
-    "node-fetch": "^3.3.0",
-    "sharp": "^0.33.0",
-    "dotenv": "^16.3.0"
+    "telegraf": "^4.16.3"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
