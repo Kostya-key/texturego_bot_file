@@ -1,6 +1,5 @@
 {
-  "name": "texturego-bot",
-  "version": "1.0.0",
+  "name": "texture-bot",
   "type": "module",
   "dependencies": {
     "telegraf": "^4.16.3"
