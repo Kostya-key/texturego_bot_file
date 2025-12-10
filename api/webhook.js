@@ -1,27 +1,38 @@
-// api/webhook.js - ТЕСТОВАЯ ВЕРСИЯ
+// api/webhook.js - начало функции
 export default async (req, res) => {
-  console.log('Тест: Функция вызвана. Метод:', req.method);
+  console.log('=== НАЧАЛО ВЫПОЛНЕНИЯ ФУНКЦИИ ===');
   
-  // 1. Проверяем переменную BOT_TOKEN (выводим в логи первые 5 символов)
-  const tokenPreview = process.env.BOT_TOKEN ? process.env.BOT_TOKEN.substring(0, 5) + '...' : 'НЕ НАЙДЕН';
-  console.log('Тест: BOT_TOKEN =', tokenPreview);
-  
-  // 2. Для GET-запроса просто показываем статус
-  if (req.method === 'GET') {
-    return res.status(200).send(`
-      <h1>Тест пройден ✅</h1>
-      <p>Функция работает. BOT_TOKEN: ${tokenPreview}</p>
-      <p>Теперь отправьте POST-запрос (это сделает Telegram).</p>
-    `);
+  try {
+    // Проверяем токен (безопасно, показываем только первые символы)
+    const tokenExists = !!process.env.BOT_TOKEN;
+    console.log('BOT_TOKEN существует?', tokenExists);
+    
+    // Для GET запроса — проверочная страница
+    if (req.method === 'GET') {
+      return res.status(200).send('<h1>Bot endpoint is live</h1>');
+    }
+    
+    // Для POST запроса от Telegram
+    if (req.method === 'POST') {
+      console.log('Получен POST запрос от Telegram');
+      // Начинаем обрабатывать обновление от Telegram
+      const update = req.body;
+      console.log('Тип update:', typeof update);
+      
+      // Инициализируем бота только если токен есть
+      if (!tokenExists) {
+        throw new Error('BOT_TOKEN не найден в переменных окружения Vercel.');
+      }
+      const { Telegraf } = await import('telegraf');
+      const bot = new Telegraf(process.env.BOT_TOKEN);
+      
+      // Тут далее идёт ваш код обработки команд
+      // ...
+    }
+  } catch (error) {
+    // ВСЕ ошибки будут видны здесь
+    console.error('❌ КРИТИЧЕСКАЯ ОШИБКА В ФУНКЦИИ:', error.message);
+    console.error('Стек ошибки:', error.stack);
+    return res.status(500).json({ error: error.message });
   }
-  
-  // 3. Для POST-запроса (от Telegram) отвечаем простым JSON
-  if (req.method === 'POST') {
-    console.log('Тест: Получен POST-запрос (сообщение от Telegram)');
-    // Простейший корректный ответ для Telegram
-    return res.status(200).json({ method: 'sendMessage', chat_id: 123, text: 'Тестовый ответ от бота' });
-  }
-  
-  // 4. Для других методов
-  return res.status(405).send('Method Not Allowed');
 };
