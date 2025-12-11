@@ -1,146 +1,192 @@
-// api/bot.js - Рабочий MVP для TextureBot
 import { Telegraf } from 'telegraf';
-import fetch from 'node-fetch'; // Для загрузки файла с серверов Telegram
+import { processImageToTexture } from './utils/imageProcessor.js';
 
-// Проверяем критически важную переменную
-if (!process.env.BOT_TOKEN) {
-  throw new Error('❌ FATAL: BOT_TOKEN не найден!');
+// Инициализация бота
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  throw new Error('❌ BOT_TOKEN не найден в Environment Variables Vercel!');
 }
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN);
 
-// --- Обработка команд ---
-bot.command('start', (ctx) => {
-  console.log(`👤 Команда /start от ${ctx.from.first_name} (ID: ${ctx.from.id})`);
-  ctx.replyWithMarkdown(
-    `*🎨 TextureBot MVP*\\n\\n` +
-    `Привет! Я превращаю фото поверхностей в текстуры.\\n` +
-    `*Как это работает:*\\n` +
-    `1. Сфотографируй любую поверхность (стена, дерево, камень)\\n` +
-    `2. Отправь фото мне\\n` +
-    `3. Через 5-10 секунд получишь текстуру PNG\\n\\n` +
-    `*Просто отправь мне фото!* 📸`
+// ========== КОМАНДЫ БОТА ==========
+bot.command('start', async (ctx) => {
+  console.log(`👤 /start от ${ctx.from.id} (@${ctx.from.username})`);
+  await ctx.replyWithMarkdown(
+    `*🎨 TextureBot | MVP* \\n\\n` +
+    `Я создаю *бесшовные (tileable) текстуры* из ваших фотографий.\\n\\n` +
+    `*📸 Как использовать:*\\n` +
+    `1. Сфотографируйте поверхность (стена, дерево, ткань)\\n` +
+    `2. Отправьте фото *без сжатия* (как файл, если возможно)\\n` +
+    `3. Получите текстуру 2048×2048 PNG\\n\\n` +
+    `*🎯 Советы для лучшего результата:*\\n` +
+    `• Фотографируйте близко и параллельно поверхности\\n` +
+    `• Хорошее освещение, без резких теней\\n` +
+    `• Избегайте перспективных искажений\\n\\n` +
+    `*Просто отправьте мне фото!*`
   );
 });
 
-bot.command('help', (ctx) => ctx.reply('Просто отправь мне фото любой поверхности, и я создам из неё текстуру.'));
+bot.command('help', (ctx) => {
+  ctx.reply(
+    'Отправьте фото любой поверхности. Я создам из неё текстуру для 3D графики или игр.\n\n' +
+    'Для начала работы используйте /start'
+  );
+});
 
-// --- Обработка фото (ОСНОВНАЯ ФУНКЦИЯ MVP) ---
+bot.command('status', (ctx) => {
+  ctx.reply('✅ Бот работает исправно! Сервер: Vercel, время ответа: < 10 сек.');
+});
+
+// ========== ОБРАБОТКА ФОТО ==========
 bot.on('photo', async (ctx) => {
+  const startTime = Date.now();
   const chatId = ctx.message.chat.id;
   const messageId = ctx.message.message_id;
   
   // Сообщение о начале обработки
-  const processingMsg = await ctx.reply('🔄 *Принял фото. Начинаю обработку...*', { 
+  const statusMsg = await ctx.reply('🔄 *Принял фото. Начинаю обработку...*', {
     parse_mode: 'Markdown',
-    reply_to_message_id: messageId 
+    reply_to_message_id: messageId
   });
-
+  
   try {
-    console.log(`📸 Фото от ${ctx.from.id}. Начинаю обработку...`);
+    console.log(`📸 Обработка фото от ${ctx.from.id}`);
     
-    // 1. Получаем file_id самого качественного варианта фото
-    const photo = ctx.message.photo.pop(); // Берём фото с самым высоким разрешением
+    // 1. Получаем file_id самого качественного фото
+    const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileId = photo.file_id;
     
-    // 2. Получаем путь к файлу на серверах Telegram
+    // 2. Получаем информацию о файле
     const fileInfo = await ctx.telegram.getFile(fileId);
-    const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${fileInfo.file_path}`;
-    console.log(`📥 Ссылка на файл: ${fileUrl}`);
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileInfo.file_path}`;
+    console.log(`📥 Ссылка на файл: ${fileUrl.substring(0, 80)}...`);
     
-    // 3. Загружаем файл (пока просто для примера)
-    // В будущем здесь будет ваша логика обработки изображения!
-    // const imageBuffer = await fetch(fileUrl).then(res => res.buffer());
-    
-    // 4. Имитируем обработку (заглушка на 2 секунды)
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // 5. Подготавливаем "результат" - пока это просто сообщение
-    // ВАЖНО: Здесь вы позже будете генерировать реальную текстуру
-    const textureInfo = `✅ *Текстура готова!*\n\n` +
-                       `Размер: 2048x2048 px\n` +
-                       `Формат: PNG\n` +
-                       `Файл: texture_${Date.now()}.png`;
-    
-    // 6. Обновляем сообщение о статусе
+    // 3. Обновляем статус
     await ctx.telegram.editMessageText(
       chatId,
-      processingMsg.message_id,
+      statusMsg.message_id,
       null,
-      textureInfo,
+      '🔄 *Загружаю и анализирую изображение...*',
       { parse_mode: 'Markdown' }
     );
     
-    // 7. Отправляем "текстуру" (пока заглушку)
-    // В реальности здесь будет: ctx.replyWithDocument({ source: realTextureBuffer, filename: 'texture.png' })
+    // 4. ОСНОВНАЯ ЛОГИКА: создаём текстуру
+    const { textureBuffer, textureInfo } = await processImageToTexture(fileUrl);
+    
+    // 5. Обновляем статус
+    await ctx.telegram.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      null,
+      `✅ *Текстура готова!*\\n\\n${textureInfo}\\n\\n*Отправляю файл...*`,
+      { parse_mode: 'Markdown' }
+    );
+    
+    // 6. Отправляем текстуру пользователю
     await ctx.replyWithDocument(
-      { 
-        source: Buffer.from('Заглушка для будущей текстуры'), 
-        filename: `texture_${ctx.from.id}_${Date.now()}.png` 
+      {
+        source: textureBuffer,
+        filename: `texture_${Date.now()}.png`
       },
-      { 
-        caption: '🎨 Ваша текстура готова к использованию!',
+      {
+        caption: `🎨 *Ваша текстура готова!*\n\n${textureInfo}\n\n⏱ Время обработки: ${Date.now() - startTime}мс`,
+        parse_mode: 'Markdown',
         reply_to_message_id: messageId
       }
     );
     
-    console.log(`✅ Успешно обработал фото для ${ctx.from.id}`);
+    // 7. Финальное обновление статуса
+    await ctx.telegram.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      null,
+      `✅ *Готово! Текстура отправлена.*\\n\\nМожно отправлять следующее фото.`,
+      { parse_mode: 'Markdown' }
+    );
+    
+    console.log(`✅ Успешно обработал фото за ${Date.now() - startTime}мс`);
     
   } catch (error) {
-    console.error(`💥 Ошибка обработки фото:`, error);
+    console.error('💥 Ошибка обработки фото:', error);
     
-    // Пытаемся обновить сообщение об ошибке
-    try {
-      await ctx.telegram.editMessageText(
-        chatId,
-        processingMsg.message_id,
-        null,
-        `❌ *Произошла ошибка при обработке фото*\n\nПопробуйте отправить другое изображение.`,
-        { parse_mode: 'Markdown' }
-      );
-    } catch (e) {
-      // Если не удалось обновить, просто отправляем новое сообщение
-      ctx.reply('❌ Произошла ошибка. Попробуйте ещё раз.');
-    }
+    // Обновляем сообщение об ошибке
+    await ctx.telegram.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      null,
+      `❌ *Ошибка обработки*\\n\\n${error.message}\\n\\nПопробуйте другое изображение.`,
+      { parse_mode: 'Markdown' }
+    );
+    
+    // Отправляем дополнительное сообщение с подсказкой
+    ctx.reply(
+      'Возможные причины:\n' +
+      '• Слишком большое изображение\n' +
+      '• Неподдерживаемый формат\n' +
+      '• Проблемы с загрузкой файла\n\n' +
+      'Попробуйте отправить фото меньшего размера или как документ.'
+    );
   }
 });
 
-// --- Обработка текстовых сообщений (не фото) ---
-bot.on('text', (ctx) => {
-  if (!ctx.message.text.startsWith('/')) {
-    ctx.reply('📸 Отправь мне фото поверхности для создания текстуры!');
-  }
-});
-
-// --- Вебхук-обработчик для Vercel ---
-import { createReadStream } from 'fs';
-
-export default async function handler(req, res) {
-  // Логируем факт вызова
-  console.log(`🌐 [${new Date().toISOString()}] Вебхук вызван: ${req.method}`);
+// ========== ОБРАБОТКА ДОКУМЕНТОВ (если фото отправлено как файл) ==========
+bot.on('document', async (ctx) => {
+  const doc = ctx.message.document;
+  const mimeType = doc.mime_type;
   
-  // Обработка GET (для проверки)
+  if (mimeType && mimeType.startsWith('image/')) {
+    // Трактуем как фото и запускаем обработку
+    ctx.message.photo = [{ file_id: doc.file_id, file_size: doc.file_size }];
+    bot.handleUpdate({ message: ctx.message, update_id: Date.now() });
+  } else {
+    ctx.reply('📸 Пожалуйста, отправьте изображение (JPEG, PNG, etc.)');
+  }
+});
+
+// ========== ОБРАБОТКА ВСЕХ СООБЩЕНИЙ ==========
+bot.on('message', (ctx) => {
+  if (ctx.message.text && !ctx.message.text.startsWith('/')) {
+    ctx.reply('📸 Отправьте мне фото поверхности для создания текстуры!');
+  }
+});
+
+// ========== ОБРАБОТЧИК ВЕБХУКА ДЛЯ VERCEL ==========
+export default async function handler(req, res) {
+  console.log(`🌐 [${new Date().toISOString()}] ${req.method} ${req.url}`);
+  
+  // Для GET запросов (проверка работоспособности)
   if (req.method === 'GET') {
     return res.status(200).send(`
       <!DOCTYPE html>
       <html>
-        <head><title>TextureBot Status</title></head>
+        <head>
+          <title>🎨 TextureBot Status</title>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+            .status { background: #22c55e; color: white; padding: 10px 20px; border-radius: 8px; display: inline-block; }
+            code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+          </style>
+        </head>
         <body>
-          <h1>✅ TextureBot активен</h1>
-          <p>Вебхук работает корректно.</p>
-          <p>Отправьте /start вашему боту в Telegram.</p>
+          <h1>🎨 TextureBot</h1>
+          <p><span class="status">✅ Активен</span></p>
+          <p>Telegram вебхук работает корректно.</p>
+          <p>Токен бота: <code>${BOT_TOKEN ? 'Установлен' : 'Не найден!'}</code></p>
+          <p>Отправьте <code>/start</code> вашему боту в Telegram.</p>
         </body>
       </html>
     `);
   }
   
-  // Обработка POST (основной вебхук)
+  // Для POST запросов (вебхук от Telegram)
   if (req.method === 'POST') {
     try {
-      // Парсим тело запроса
+      // Читаем тело запроса
       const rawBody = await getRawBody(req);
-      const update = JSON.parse(rawBody.toString());
+      const update = JSON.parse(rawBody.toString('utf8'));
       
-      // Обрабатываем обновление через бота
+      // Передаём обновление боту
       await bot.handleUpdate(update);
       
       // Отвечаем Telegram, что всё ок
@@ -148,19 +194,29 @@ export default async function handler(req, res) {
       
     } catch (error) {
       console.error('💥 Ошибка в вебхуке:', error);
-      return res.status(500).json({ error: 'Internal Server Error' });
+      return res.status(500).json({ 
+        ok: false, 
+        error: 'Internal Server Error',
+        details: error.message 
+      });
     }
   }
   
-  // Все другие методы
+  // Для всех остальных методов HTTP
   return res.status(405).send('Method Not Allowed');
 }
 
 // Вспомогательная функция для чтения тела запроса
-async function getRawBody(req) {
+async function getRawBody(request) {
   const chunks = [];
-  for await (const chunk of req) {
+  for await (const chunk of request) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
 }
+
+// Обработчик ошибок бота
+bot.catch((err, ctx) => {
+  console.error(`💥 Ошибка бота для ${ctx.updateType}:`, err);
+  ctx.reply('❌ Произошла внутренняя ошибка бота. Попробуйте еще раз.');
+});
